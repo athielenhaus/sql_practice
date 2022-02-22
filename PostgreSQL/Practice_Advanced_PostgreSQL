@@ -1,0 +1,116 @@
+
+
+-- CREATING PARTITIONS
+
+drop table if exists sensor_data;
+
+create table sensor_data (
+  sensor_id int not null,
+  msmt_date timestamp not null,
+  temperature int,
+  humidity int)
+  PARTITION BY RANGE (msmt_date);
+
+create table sensor_data_2022_01 partition of sensor_data
+for values from ('2022-01-01') to ('2022-02-01');
+
+create table sensor_data_2022_02 partition of sensor_data
+for values from ('2022-02-01') to ('2022-03-01');
+
+-- MATERIALIZED VIEWS
+SET search_path = data_sci, "$user", public;
+
+create materialized view employees_regions as
+  (select e.last_name, e.salary, cr.region_name
+  from employees e
+  join company_regions cr
+  on e.region_id = cr.id);
+  
+select * from employees_regions;
+
+refresh materialized view employees_regions;
+
+
+-- GENERATE SERIES
+select 
+  *
+from
+  generate_series(1, 100) as t1;
+
+
+-- Create a timestamp for every minute in a specified range
+select
+  *
+from
+  generate_series('2021-01-01 00:00'::timestamp,
+				 '2021-02-15 00:00'::timestamp,
+				 '1 minutes') as t2;
+
+
+select
+  *
+from
+  generate_series(1, 100) as t1,
+  generate_series('2021-01-01 00:00'::timestamp,
+				 '2021-02-15 00:00'::timestamp,
+				 '1 minutes') as t2;
+
+
+-- GENERATE TIMESERIES DATA
+insert into sensor_data
+	(with sensors_datetimes as 
+		(
+		select
+		  *
+		from
+		  generate_series(1, 100) as t1,
+		  generate_series('2022-01-01 00:00'::timestamp,
+						 '2022-02-15 00:00'::timestamp,
+						 '1 minutes') as t2
+		)
+	select
+	  sd.*,
+	  floor(random() * 30) as temperature,
+	  floor(random() * 80) as humidity
+	from 
+	  sensors_datetimes sd);
+	  
+-- EXPLAIN PLAN
+/* USE THIS TO CHECK HOW HELPFUL AN INDEX ACTUALLY IS IN SPEEDING UP PERFORMANCE*/
+
+explain select
+  *
+from 
+  sensor_data
+where
+  sensor_id between 10 and 20;
+  
+create index idx_sensor_data_id on sensor_data(sensor_id);
+
+
+create table sensors as
+	(with sensor_ids as
+	  (select i from generate_series(1, 100) as i)
+	select i, 'sensor' || i::text as sensor_name
+	from sensor_ids);
+
+select * from sensors;
+
+
+explain select
+  s.sensor_name,
+  sm.msmt_date,
+  sm.temperature,
+  sm.humidity
+from 
+  sensor_data sm
+left join 
+  sensors s
+on 
+  sm.sensor_id = s.i
+/* when 'where' clause is added, join method switches from hash to nested loop
+nested loop works well for small amounts of data. If nested loop is being used by 
+system even with large amounts of data, its a good idea to check joins and indexes */
+where
+  s.i in ('30', '40', '43');
+
